@@ -187,7 +187,7 @@ class CrawlThread(threading.Thread):
 
             
             for i in links:
-                if i[0] == '/' or (len(i) >= 4 and i[0:4] == "http"):  #Don't be whitespace's bitch
+                if i[0] == '/' or (len(i) >= 4 and i[0:4] == "http"):  
                     if i[0] == '/':
                         nextLink = urlparse.urljoin(addr, i)
                     else:
