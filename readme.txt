@@ -1,6 +1,6 @@
 	  A multithreaded web crawler. crawl.py is dependent on simplerobots.py, top10.py, google.py and BeautifulSoup.py. If your current directory is not in your PYTHONPATH then these files must be added to a directory that is.
 
-crawl.py  [options] "search terms"
+crawl.py  [options] search terms
 
 
 
@@ -20,7 +20,7 @@ Optional parameters
 		Number of threads that will make concurrent http requests. 1 <= t <= 200. Large values of t (greater than 50) will result in a much higher degree of failed requests and http errors. Default value of 20.
 
 
-	  -c
+	  -l
 		Crawls Per Domain: number of pages from a single domain or subdomain that will be allowed on the queue to be crawled. Defaults to 100.
 
 		
