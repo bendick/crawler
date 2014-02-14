@@ -1,7 +1,7 @@
 What's New
 
-       The webcrawler not validates ssl certificates against CA's from OpenSSl 1.0.1.
-       If the crawler encounters a self signed ssl certificate or one whose hostname does not match it will continue to crawl the site and add its links to the queue but will mark the page's status as untrusted in the page header in the pages file. I have also made use of a RFC 6125 compliant hostname matching function backported from Python 3.4 (https://pypi.python.org/pypi/backports.ssl_match_hostname). Oddly enough, the Python 2.x ssl module doesn't just fail to check the hostname against the certificate by default but doesn't contain any functionality to do so leaving it somewhat crippled.
+       The webcrawler now validates ssl certificates against CA's from OpenSSl 1.0.1.
+       If the crawler encounters a self-signed ssl certificate or one whose hostname does not match it will continue to crawl the site and add its links to the queue but will mark the page's status as untrusted in the page header in the pages file. I have made use of a RFC 6125 compliant hostname matching function backported from Python 3.4 (https://pypi.python.org/pypi/backports.ssl_match_hostname). Oddly enough, the Python 2.x ssl module doesn't just fail to check the hostname against the certificate by default but doesn't contain any functionality to do so leaving it somewhat crippled.
 
 
 
