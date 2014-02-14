@@ -10,6 +10,10 @@ import sets
 import urllib2
 import simplerobot
 from optparse import OptionParser
+import ssl
+import httplib
+import socket
+import ssl_match_hostname
 
 opts = OptionParser()
 
@@ -26,6 +30,11 @@ if len(args) < 1:
     exit()
 
 EXCLUDED_EXTENSIONS = ('7z', 'aac', 'ac3', 'aiff', 'ape', 'asf', 'asx', 'asx', 'avi', 'bin', 'css', 'doc', 'dtd', 'exe', 'f4v', 'flv', 'gif', 'gz', 'ico', 'jar', 'jpg', 'js', 'm1v', 'm3u', 'mka', 'mkv', 'mov', 'mp2', 'mp3', 'mp4', 'mpeg', 'mpg', 'ogg', 'pdf', 'png', 'pps', 'ppt', 'rar', 'raw', 'rss', 'swf', 'tar', 'wav', 'wma', 'wmv', 'xls', 'xml', 'xsd', 'zip')
+
+FLAG_HTTP = 0
+FLAG_TRUSTED_HTTPS = 1
+FLAG_SELFSIGNED_HTTPS = 2
+FLAG_MISMATCHED_HTTPS = 3
 
 class Parser(htmllib.HTMLParser):
 
@@ -71,13 +80,12 @@ def check_mime(mime_list):
 
 
 class Logger():
-    def __init__(self, crawledLock, crawled, pageLock, pages, cList, lnk):
+    def __init__(self, crawledLock, crawled, pageLock, pages, cList):
         self.crawledLock = crawledLock
         self.crawled = crawled
         self.pageLock = pageLock
         self.pages = pages
         self.cList = cList
-        self.lnk = lnk
         self.sz = 0
         self.er = 0
     def logCrawl(s):
@@ -89,6 +97,25 @@ class Logger():
         self.pages.write(s) 
         self.pageLock.release()
         
+
+class ValidHTTPSConnection(httplib.HTTPConnection): #This class implements ssl certificate validation for urllib2 ssl requests
+    default_port = httplib.HTTPS_PORT
+
+    def __init__(self, *args, **kwargs):
+        httplib.HTTPConnection.__init__(self, *args, **kwargs)
+
+    def connect(self):
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.sock = ssl.wrap_socket(s, ca_certs="ca-certificates.crt", cert_reqs=ssl.CERT_REQUIRED)
+        self.sock.connect((self.host, self.port))
+        cert = self.sock.getpeercert()
+        ssl_match_hostname.match_hostname(cert, self.host)  #Even after forcing certificate validation the ssl library still does not check if the certificate's hostname matches, matching function pulled from python 3.4 ssl module
+
+
+class ValidHTTPSHandler(urllib2.HTTPSHandler):
+    def https_open(self, req):
+            return self.do_open(ValidHTTPSConnection, req)
+
 
 class CrawlThread(threading.Thread):
     def __init__(self, q, history, dLock, IOLock, log, recent, recLock):
@@ -142,22 +169,43 @@ class CrawlThread(threading.Thread):
             self.IOLock.release()
 
             #Fetch html site
-            try:
-                data = urllib2.urlopen(addr, timeout=options.TIMEOUT)
-                site = data.read()
-                
-            except IOError, e:
-                print "IO Error:", e
-                site = 'HTTP Request Error'
-                self.log.er += 1
-            except UnboundLocalError, e:  #The exception "variable 'data' referenced before assignment begins to pop up when I run a large number of threads
-                site = 'HTTP Request Error'
-            except urllib2.HTTPError, e:
-                print "IO Error:", e
-                site = 'HTTP Request Error'
-                self.log.er += 1
-            except Exception, e:
-                print "Unexpected exception:", e
+
+            if (len(addr) > 7 and addr[:8] == "https://"): #Check if this is an https url
+                try:
+                    connType = FLAG_TRUSTED_HTTPS
+                    opener = urllib2.build_opener(ValidHTTPSHandler) #Open an SSL connection
+                    data = opener.open(addr, timeout=options.TIMEOUT)
+                    site = data.read()
+
+                except urllib2.URLError: #Certificate was self-signed or otherwise failed to chain to a CA properly
+                    connType = FLAG_SELFSIGNED_HTTPS #Mark as self signed site
+                    data = urllib2.urlopen(addr, timeout=options.TIMEOUT) #Proceed with crawl
+                    site = data.read()
+                    
+                except ssl_match_hostname.CertificateError: #cert is validated but hostname does not match
+                    connType = FLAG_MISMATCHED_HTTPS #Mark as a possible MITM
+                    data = urllib2.urlopen(addr, timeout=options.TIMEOUT) #Proceed with crawl
+                    site = data.read()
+                    
+                    
+            else:
+                try:
+                    connType = FLAG_HTTP
+                    data = urllib2.urlopen(addr, timeout=options.TIMEOUT)
+                    site = data.read()
+
+                except IOError, e:
+                    print "IO Error:", e
+                    site = 'HTTP Request Error'
+                    self.log.er += 1
+                except UnboundLocalError, e:  #The exception "variable 'data' referenced before assignment begins to pop up when I run a large number of threads
+                    site = 'HTTP Request Error'
+                except urllib2.HTTPError, e:
+                    print "IO Error:", e
+                    site = 'HTTP Request Error'
+                    self.log.er += 1
+                except Exception, e:
+                    print "Unexpected exception:", e
                 
 
             #Record page we are currently crawling
@@ -167,7 +215,16 @@ class CrawlThread(threading.Thread):
             self.log.crawledLock.release()
 
             limiter = "\\\\\\\\\-----/////"
-            pref = '\n' + limiter + "Site # " + str(len(self.log.cList)) + ": " + addr + limiter + '\n'
+            pref = '\n' + limiter 
+            if connType == FLAG_HTTP:
+                pref += "Connection: HTTP."
+            if connType == FLAG_TRUSTED_HTTPS:
+                pref += "Connection: Trusted HTTPS."
+            if connType == FLAG_SELFSIGNED_HTTPS:
+                pref += "Connection: Untrusted Self-Signed HTTPS."
+            if connType == FLAG_MISMATCHED_HTTPS:
+                pref += "Connection: Untrusted HTTPS (hostname mismatch)."
+            pref += "Site # " + str(len(self.log.cList)) + ": " + addr + limiter + '\n'
 
             #Write page's data 
             self.log.pageLock.acquire()
@@ -244,9 +301,7 @@ def main():
     pages = open("pages", 'w')
     cList = []
 
-    lnk = open('lnk', 'w')
-
-    log = Logger(crawledLock, crawled, pageLock, pages, cList, lnk)
+    log = Logger(crawledLock, crawled, pageLock, pages, cList)
     
     recent = sets.Set()
     recLock = threading.Lock()
